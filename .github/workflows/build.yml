@@ -6,9 +6,45 @@ on:
   pull_request:
     branches: [main]
 
+# Why two jobs:
+#   lint    — required signal. Runs without local libs/, catches regressions in
+#             build.gradle, plugin versions, declared deps, gradle wrapper.
+#   compile — advisory. Runs full ./gradlew build. Cannot pass in CI without
+#             libs/*.jar (MineColonies hard-dep, see scripts/fetch-deps.sh —
+#             populates libs/ from a local Minecraft instance, not reproducible
+#             on a GitHub runner). continue-on-error so PR shows yellow not red.
+#
+# When Steve eventually wants compile-in-CI: vendor the jars (license
+# permitting) or add a curse-maven repo to build.gradle (third-party supply
+# chain). See audit/squire-mod-v2-ci-architecture-2026-05-09.md for trade-offs.
+
 jobs:
-  build:
+  lint:
+    name: Lint (gradle metadata)
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5.2.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a  # v4
+
+      - name: Verify gradle wrapper + plugin resolution
+        run: ./gradlew help tasks --no-daemon
+
+      - name: Resolve declared dependencies (excluding local libs/)
+        run: ./gradlew dependencies --no-daemon
+
+  compile:
+    name: Compile (advisory — needs local libs/)
+    runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -27,6 +63,7 @@ jobs:
 
       - name: Extract mod version
         id: version
+        if: success()
         run: echo "version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifacts
